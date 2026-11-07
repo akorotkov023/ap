@@ -3,7 +3,7 @@
 .env.local
 .env.production
 migrate-to-server.sh
-
+migration_export/
 # OS files
 .DS_Store
 Thumbs.db
