@@ -19,10 +19,10 @@ services:
       - ./my.cnf:/etc/mysql/conf.d/my.cnf:ro
     healthcheck:
       test: [ "CMD-SHELL", "mysqladmin ping -h localhost -uroot -p\"$$MYSQL_ROOT_PASSWORD\" --silent" ]
-      interval: 10s
+      interval: 5s
       timeout: 5s
-      retries: 15
-      start_period: 90s
+      retries: 30
+      start_period: 120s
 
   web:
     build:
