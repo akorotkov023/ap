@@ -131,13 +131,14 @@ Auth::logout();
 Auth::check();                    // bool — session has user_id?
 Auth::user();                     // ?array — current user row
 Auth::isAdmin();                  // bool
-Auth::seedAdmin($email, $pass);   // idempotent; creates the admin and re-syncs the password if ADMIN_PASSWORD changes
+Auth::seedAdmin($email, $pass);   // idempotent; creates the admin if missing (per request, cheap)
+Auth::syncAdminPassword($email, $pass); // create/update admin password from .env (run at startup only)
 Auth::listUsers();                // array
 Auth::setRole($userId, $role);    // 'admin' | 'user'
 Auth::getUserByEmail($email);     // ?array
 ```
 
-The admin account is auto-seeded on first request from `ADMIN_EMAIL`/`ADMIN_PASSWORD`. `ADMIN_PASSWORD` is authoritative: when it changes in `.env`, the admin's password is re-synced on the next request. The sync is detected via a SHA-256 marker stored in the `settings` table (namespace `admin_seed`, key `password_marker`), so a password changed through the UI is preserved unless `.env` itself changes — no bcrypt re-hash runs on every request. Self-registration is off unless `ALLOW_REGISTRATION=true`.
+The admin account is auto-seeded on first request from `ADMIN_EMAIL`/`ADMIN_PASSWORD`. To apply a **changed** `ADMIN_PASSWORD`, `/start.sh` runs `bin/sync_admin_password.php` → `Auth::syncAdminPassword()` once at container startup: it creates the admin or updates the password when `.env` changes, detected via a SHA-256 marker in the `settings` table (namespace `admin_seed`, key `password_marker`), so a password changed through the UI is preserved unless `.env` itself changes. It deliberately runs at startup (not per request) to avoid lock contention on `users`. Self-registration is off unless `ALLOW_REGISTRATION=true`.
 
 In `index.php`, route handlers use helpers: `requireAuth()`, `requireAdmin()`, `requireApiAuth()`, `getAuthUser()`.
 

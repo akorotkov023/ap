@@ -84,18 +84,33 @@ class Auth {
   public static function seedAdmin(string $email, string $password): void {
     $pdo = DB::conn();
     $email = strtolower(trim($email));
+    $stmt = $pdo->prepare('SELECT id FROM users WHERE email = ? LIMIT 1');
+    $stmt->execute([$email]);
+    if ($stmt->fetchColumn()) return;
+    $hash = password_hash($password, PASSWORD_DEFAULT);
+    $stmt = $pdo->prepare('INSERT INTO users (email, password_hash, name, role, status) VALUES (?, ?, ?, ?, ?)');
+    $stmt->execute([$email, $hash, 'Administrator', 'admin', 'active']);
+  }
 
-    // Marker of the last ADMIN_PASSWORD applied. Comparing the marker (instead
-    // of re-verifying bcrypt on every request) lets us detect a .env change
-    // cheaply and only re-sync then — without clobbering a password the admin
-    // changed through the UI while .env is unchanged.
+  /**
+   * Syncs the admin account password to the given value (creates it if missing,
+   * otherwise updates it). Intended to run once at container startup — NOT on
+   * every request — to avoid lock contention on the `users` table.
+   *
+   * A SHA-256 marker stored in `settings` makes this a no-op when the value is
+   * unchanged, so it won't clobber a password the admin changed through the UI
+   * while `.env` is unchanged.
+   */
+  public static function syncAdminPassword(string $email, string $password): void {
+    $pdo = DB::conn();
+    $email = strtolower(trim($email));
     $marker = hash('sha256', $password);
 
-    $stmt = $pdo->prepare('SELECT id, password_hash FROM users WHERE email = ? LIMIT 1');
+    $stmt = $pdo->prepare('SELECT id FROM users WHERE email = ? LIMIT 1');
     $stmt->execute([$email]);
-    $existing = $stmt->fetch();
+    $existingId = $stmt->fetchColumn();
 
-    if (!$existing) {
+    if (!$existingId) {
       $hash = password_hash($password, PASSWORD_DEFAULT);
       $stmt = $pdo->prepare('INSERT INTO users (email, password_hash, name, role, status) VALUES (?, ?, ?, ?, ?)');
       $stmt->execute([$email, $hash, 'Administrator', 'admin', 'active']);
@@ -103,7 +118,7 @@ class Auth {
       return;
     }
 
-    $adminId = (int)$existing['id'];
+    $adminId = (int)$existingId;
     if (self::getAdminSeedMarker($adminId) !== $marker) {
       $hash = password_hash($password, PASSWORD_DEFAULT);
       $stmt = $pdo->prepare('UPDATE users SET password_hash = ? WHERE id = ?');

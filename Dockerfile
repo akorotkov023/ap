@@ -78,6 +78,8 @@ fi\n\
 /bin/bash /var/www/html/bin/monitor_metrics.sh\n\
 # Start Telegram bot (kept alive by cron telegram_bot_monitor.sh)\n\
 runuser -u www-data -- /bin/bash /var/www/html/bin/telegram_bot_monitor.sh\n\
+# Sync admin password from .env (create/update once at startup)\n\
+runuser -u www-data -- php /var/www/html/bin/sync_admin_password.php || true\n\
 apache2-foreground' > /start.sh \
     && chmod +x /start.sh
 
