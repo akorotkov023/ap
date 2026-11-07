@@ -84,12 +84,45 @@ class Auth {
   public static function seedAdmin(string $email, string $password): void {
     $pdo = DB::conn();
     $email = strtolower(trim($email));
-    $stmt = $pdo->prepare('SELECT id FROM users WHERE email = ? LIMIT 1');
+
+    // Marker of the last ADMIN_PASSWORD applied. Comparing the marker (instead
+    // of re-verifying bcrypt on every request) lets us detect a .env change
+    // cheaply and only re-sync then — without clobbering a password the admin
+    // changed through the UI while .env is unchanged.
+    $marker = hash('sha256', $password);
+
+    $stmt = $pdo->prepare('SELECT id, password_hash FROM users WHERE email = ? LIMIT 1');
     $stmt->execute([$email]);
-    if ($stmt->fetchColumn()) return;
-    $hash = password_hash($password, PASSWORD_DEFAULT);
-    $stmt = $pdo->prepare('INSERT INTO users (email, password_hash, name, role, status) VALUES (?, ?, ?, ?, ?)');
-    $stmt->execute([$email, $hash, 'Administrator', 'admin', 'active']);
+    $existing = $stmt->fetch();
+
+    if (!$existing) {
+      $hash = password_hash($password, PASSWORD_DEFAULT);
+      $stmt = $pdo->prepare('INSERT INTO users (email, password_hash, name, role, status) VALUES (?, ?, ?, ?, ?)');
+      $stmt->execute([$email, $hash, 'Administrator', 'admin', 'active']);
+      self::setAdminSeedMarker((int)$pdo->lastInsertId(), $marker);
+      return;
+    }
+
+    $adminId = (int)$existing['id'];
+    if (self::getAdminSeedMarker($adminId) !== $marker) {
+      $hash = password_hash($password, PASSWORD_DEFAULT);
+      $stmt = $pdo->prepare('UPDATE users SET password_hash = ? WHERE id = ?');
+      $stmt->execute([$hash, $adminId]);
+      self::setAdminSeedMarker($adminId, $marker);
+    }
+  }
+
+  /**
+   * Returns the last ADMIN_PASSWORD marker synced for the given admin, or null
+   * when none has been recorded yet (e.g. existing installs before this feature).
+   */
+  private static function getAdminSeedMarker(int $adminId): ?string {
+    $data = self::getSetting($adminId, 'admin_seed', 'password_marker');
+    return $data['v'] ?? null;
+  }
+
+  private static function setAdminSeedMarker(int $adminId, string $marker): void {
+    self::saveSetting($adminId, 'admin_seed', 'password_marker', json_encode(['v' => $marker]));
   }
 
   public static function listUsers(): array {

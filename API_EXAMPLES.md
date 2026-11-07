@@ -5,7 +5,7 @@
 ### Get JWT Token
 ```bash
 curl -X POST http://localhost:8082/api/auth/token \
-  -d "email=admin@amnez.ia&password=admin123"
+  -d "email=admin@amnez.ia&password=admin"
 ```
 
 Response:
@@ -190,7 +190,7 @@ from PIL import Image
 
 # Get token
 response = requests.post('http://localhost:8082/api/auth/token', 
-    data={'email': 'admin@amnez.ia', 'password': 'admin123'})
+    data={'email': 'admin@amnez.ia', 'password': 'admin'})
 token = response.json()['token']
 
 headers = {'Authorization': f'Bearer {token}'}
@@ -223,7 +223,7 @@ const fs = require('fs');
 
 // Get token
 const authResponse = await axios.post('http://localhost:8082/api/auth/token', 
-  'email=admin@amnez.ia&password=admin123');
+  'email=admin@amnez.ia&password=admin1234');
 const token = authResponse.data.token;
 
 const headers = { 'Authorization': `Bearer ${token}` };
@@ -263,7 +263,7 @@ console.log('QR code saved to qr_code.png');
             // Get token
             const formData = new URLSearchParams();
             formData.append('email', 'admin@amnez.ia');
-            formData.append('password', 'admin123');
+            formData.append('password', 'admin1234');
             
             const authResponse = await fetch('http://localhost:8082/api/auth/token', {
                 method: 'POST',

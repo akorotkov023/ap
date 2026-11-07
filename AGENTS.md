@@ -10,7 +10,7 @@ There is **no test/lint/typecheck/build tooling** and no CI. No composer scripts
 cp .env.local .env          # first time; .env is gitignored and required
 docker compose up -d --build
 docker compose exec web composer install
-# app: http://localhost:8082  (default admin: admin@amnez.ia / admin123)
+# app: http://localhost:8082  (default admin: admin@amnez.ia / admin)
 ```
 
 - DB migrations are auto-applied by the MySQL entrypoint **only on a fresh volume**. For an existing install, apply manually:
@@ -29,7 +29,7 @@ docker compose exec web composer install
 ## Gotchas
 
 - `inc/Config.php` reads `.env` (`Config::load`) and falls back to `getenv`. `DB_HOST` is `db` inside Docker, defaults to `127.0.0.1` outside. `DB.php` (unlike old docs) reads from `Config`/env, not hardcoded values.
-- Admin user is **auto-seeded** on first request from `ADMIN_EMAIL`/`ADMIN_PASSWORD` (`Auth::seedAdmin` in `index.php`). No separate registration unless `ALLOW_REGISTRATION=true`.
+- Admin user is **auto-seeded** on first request from `ADMIN_EMAIL`/`ADMIN_PASSWORD` (`Auth::seedAdmin` in `index.php`). `ADMIN_PASSWORD` is authoritative: when it changes in `.env`, the admin's password is re-synced on the next request (detected via a SHA-256 marker stored in the `settings` table), so a password changed via the UI is *not* clobbered unless `.env` itself changes. No separate registration unless `ALLOW_REGISTRATION=true`.
 - Docker stack has three services: `web`, `db`, and `dind` (Docker-in-Docker). `web` sets `DOCKER_HOST=tcp://dind:2375` and deploys protocols to remote servers over SSH + the docker CLI.
 - Cron jobs are baked into `Dockerfile` (hourly expiry/traffic checks, 30-min LDAP sync, 3-min metrics monitor). Restart via `docker compose exec web service cron start` if needed.
 - `composer.lock` is **gitignored** (unusual) but present locally. `vendor/` gitignored.

@@ -18,11 +18,11 @@ services:
       - ./migrations:/docker-entrypoint-initdb.d
       - ./my.cnf:/etc/mysql/conf.d/my.cnf:ro
     healthcheck:
-      test: [ "CMD-SHELL", "mysqladmin ping -h localhost -uroot -p\"$$MYSQL_ROOT_PASSWORD\" --silent" ]
+      test: [ "CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p\"$$MYSQL_ROOT_PASSWORD\" --silent" ]
       interval: 5s
       timeout: 5s
-      retries: 30
-      start_period: 120s
+      retries: 60
+      start_period: 60s
 
   web:
     build:

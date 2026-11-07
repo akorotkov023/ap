@@ -206,7 +206,7 @@ Special thanks to:
 
 ## 📞 Support
 
-- **GitHub Issues:** https://github.com/infosave2007/amneziavpnphp/issues
+- **GitHub Issues:** https://github.com/akorotkov023/ap/issues
 - **Documentation:** See README files in English, Russian, and Chinese
 - **Donations:** https://t.me/tribute/app?startapp=dzX1
 
@@ -216,9 +216,8 @@ This release is licensed under the MIT License - see the [`LICENSE`](LICENSE) fi
 
 ---
 
-**Full Changelog:** https://github.com/infosave2007/amneziavpnphp/compare/v2.0.0...v2.0.1
+**Full Changelog:** https://github.com/akorotkov023/ap/compare/v2.0.0...v2.0.1
 
 **Changes since v2.0.0:**
 - Added comprehensive Russian documentation ([`README_RU.md`](README_RU.md))
-- Added comprehensive Chinese documentation ([`README_ZH.md`](README_ZH.md))
 - Updated release notes with multi-language support information

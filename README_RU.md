@@ -41,8 +41,8 @@
 ## Установка
 
 ```bash
-git clone https://github.com/infosave2007/amneziavpnphp.git
-cd amneziavpnphp
+git clone https://github.com/akorotkov023/ap.git
+cd ap
 cp .env.local .env
 
 # Для Docker Compose V2 (рекомендуется)
@@ -76,7 +76,7 @@ done
 
 Доступ: http://localhost:8082
 
-Данные для входа по умолчанию: admin@amnez.ia / admin123
+Данные для входа по умолчанию: admin@amnez.ia / admin1234
 
 ### Предварительные требования для удаленного сервера
 
@@ -108,7 +108,7 @@ DB_USERNAME=amnezia
 DB_PASSWORD=amnezia
 
 ADMIN_EMAIL=admin@amnez.ia
-ADMIN_PASSWORD=admin123
+ADMIN_PASSWORD=admin1234
 
 JWT_SECRET=your-secret-key-change-this
 ```
@@ -288,7 +288,7 @@ docker compose exec web php /var/www/html/bin/check_traffic_limits.php
 Получить JWT-токен:
 ```bash
 curl -X POST http://localhost:8082/api/auth/token \
-  -d "email=admin@amnez.ia&password=admin123"
+  -d "email=admin@amnez.ia&password=admin1234"
 ```
 
 Использовать токен:
@@ -311,17 +311,27 @@ DELETE /api/tokens/{id}             - Отозвать токен
 ```
 GET    /api/servers                 - Список всех серверов
 POST   /api/servers/create          - Создать новый сервер
-       Параметры: name, host, port, username, password
+       Параметры: name, host, port, username, password (или SSH-ключ)
 DELETE /api/servers/{id}/delete     - Удалить сервер по ID
 GET    /api/servers/{id}/clients    - Список клиентов на сервере
+GET    /api/servers/{id}/online     - Список онлайн-клиентов на сервере
+GET    /api/servers/{id}/metrics    - Метрики сервера
 ```
 
 ### Протоколы
 ```
 GET    /api/protocols/active        - Список всех доступных протоколов (JWT-дружественный, включает ID протоколов)
 GET    /api/protocols               - Управление протоколами (требует session admin auth, не JWT)
+GET    /api/protocols/{id}          - Получить один протокол
+POST   /api/protocols               - Создать протокол
+PUT    /api/protocols/{id}          - Обновить протокол
+DELETE /api/protocols/{id}          - Удалить протокол
 GET    /api/servers/{id}/protocols  - Список установленных протоколов на сервере
-POST   /api/servers/{id}/protocols/install - Установить протокол
+POST   /api/servers/{id}/protocols/install       - Установить протокол
+POST   /api/servers/{id}/protocols/selftest      - Запустить самотестирование протокола
+POST   /api/servers/{id}/protocols/diagnose-handshake - Диагностика рукопожатия
+POST   /api/servers/{id}/protocols/uninstall-all - Удалить все протоколы
+POST   /api/servers/{id}/protocols/{slug}/uninstall - Удалить протокол
 ```
 
 ### Клиенты
@@ -329,8 +339,10 @@ POST   /api/servers/{id}/protocols/install - Установить протоко
 GET    /api/clients                 - Список всех клиентов
 GET    /api/clients/{id}/details    - Получить детали клиента со статистикой, конфигурацией и QR-кодом
 GET    /api/clients/{id}/qr         - Получить QR-код клиента
+GET    /api/clients/{id}/metrics    - Метрики трафика клиента
 POST   /api/clients/create          - Создать нового клиента (возвращает конфигурацию и QR-код)
-       Параметры: server_id, name, protocol_id (опционально, по умолчанию: установлен), expires_in_days (опционально)
+       Параметры: server_id, name, protocol_id (опционально, по умолчанию: установлен), expires_in_days (опционально), traffic_limit_bytes (опционально)
+POST   /api/clients/{id}/regenerate-config - Пересоздать конфигурацию клиента
 POST   /api/clients/{id}/revoke     - Отозвать доступ клиента
 POST   /api/clients/{id}/restore    - Восстановить доступ клиента
 DELETE /api/clients/{id}/delete     - Удалить клиента по ID (удаляет из БД и сервера)
@@ -352,7 +364,7 @@ POST   /api/servers/{id}/backup     - Создать резервную копи
 GET    /api/servers/{id}/backups    - Список резервных копий сервера
 POST   /api/servers/{id}/restore    - Восстановить из резервной копии
        Параметры: backup_id
-DELETE /api/backups/{id}             - Удалить резервную копию
+DELETE /api/backups/{id}            - Удалить резервную копию
 ```
 
 ### Импорт панели
@@ -360,6 +372,22 @@ DELETE /api/backups/{id}             - Удалить резервную коп�
 POST   /api/servers/{id}/import     - Импортировать клиентов из существующей панели
        Параметры: panel_type (wg-easy|3x-ui), backup_file (multipart/form-data)
 GET    /api/servers/{id}/imports    - Получить историю импорта для сервера
+```
+
+### AI-ассистент
+```
+POST   /api/ai/assist               - Попросить AI сгенерировать конфигурацию протокола
+GET    /api/ai/models               - Список доступных AI-моделей
+POST   /api/ai/test-model           - Протестировать AI-модель
+GET    /api/protocols/{id}/ai-history - История AI-генераций для протокола
+POST   /api/ai/generations/{id}/apply - Применить AI-генерацию
+```
+
+### Переводы
+```
+GET    /api/translations/stats      - Статистика покрытия переводов
+POST   /api/translations/auto-translate - Автоперевод непереведённых строк
+GET    /api/translations/export/{lang} - Экспорт переводов для языка
 ```
 
 ## Перевод
@@ -374,22 +402,36 @@ docker compose exec web php bin/translate_all.php
 ## Структура
 
 ```
-public/index.php      - Маршруты
-inc/                  - Основные классы
-  Auth.php           - Аутентификация
-  DB.php             - Подключение к базе данных
-  Router.php         - Маршрутизация URL
-  View.php           - Twig-шаблоны
-  VpnServer.php      - Управление серверами
-  VpnClient.php      - Управление клиентами
-  Translator.php     - Многоязычность
-  JWT.php            - Токен-аутентификация
-  QrUtil.php         - Генерация QR-кодов
-  PanelImporter.php  - Импорт из wg-easy/3x-ui
-  InstallProtocolManager.php - Ядро управления протоколами
-  OpenRouterService.php - AI-интеграция
-templates/           - Twig-шаблоны
-migrations/          - SQL-миграции (выполняются в алфавитном порядке)
+public/index.php              - Единственная точка входа: все маршруты здесь (~4500 строк)
+inc/                          - Основные классы (глобальные, без namespace)
+  Auth.php                    - Аутентификация, автосоздание администратора
+  Config.php                  - Загрузчик конфигурации из .env / getenv
+  DB.php                      - Подключение к БД через PDO (читает Config/env)
+  Router.php                  - Маршрутизация URL (сопоставление шаблонов)
+  View.php                    - Рендеринг Twig-шаблонов
+  VpnServer.php               - Управление серверами и развёртывание по SSH
+  VpnClient.php               - Управление клиентами
+  Translator.php              - Многоязычность
+  JWT.php                     - JWT-аутентификация API (firebase/php-jwt)
+  QrUtil.php                  - Amnezia-совместимое кодирование QR-кодов
+  PanelImporter.php           - Импорт из wg-easy/3x-ui
+  InstallProtocolManager.php  - Скрипты установки протоколов
+  ProtocolService.php         - CRUD протоколов
+  ServerMonitoring.php        - Метрики и мониторинг
+  BackupLibrary.php           - Резервное копирование/восстановление серверов
+  Ssh.php                     - Выполнение команд по SSH
+  LdapSync.php                - Синхронизация LDAP/AD
+  OpenRouterService.php       - AI-интеграция (OpenRouter)
+  TelegramBot.php             - Telegram-бот (long-polling)
+  Logger.php                  - Логирование
+  Awg31Parameters.php         - Параметры обфускации AWG
+controllers/                  - Контроллеры фич (Settings, ProtocolManagement, AI, Logs, Scenario)
+bin/                          - CLI/cron-скрипты (проверка истечения, метрики, LDAP-синхронизация, Telegram-бот)
+templates/                    - Twig-шаблоны
+migrations/                   - SQL-миграции (применяются в алфавитном порядке, идемпотентны)
+docs/                         - Документация по протоколам (awg31.md)
+examples/                     - Примеры импорта (wg-easy, 3x-ui)
+scripts/                      - Скрипты разработки/отладки
 ```
 
 ## Технологический стек

@@ -19,6 +19,7 @@ Web-based management panel for Amnezia AWG (WireGuard) VPN servers.
 - REST API with JWT authentication
 - User authentication and access control
 - **Automatic client expiration and traffic limit checks** via cron
+- **Telegram bot** for creating clients and sending their `.conf` files via Telegram
 
 ## Available Protocols
 
@@ -42,8 +43,8 @@ Web-based management panel for Amnezia AWG (WireGuard) VPN servers.
 ## Installation
 
 ```bash
-git clone https://github.com/infosave2007/amneziavpnphp.git
-cd amneziavpnphp
+git clone https://github.com/akorotkov023/ap.git
+cd ap
 cp .env.local .env
 
 # For Docker Compose V2 (recommended)
@@ -77,13 +78,13 @@ done
 
 Access: http://localhost:8082
 
-###
+Default login: admin@amnez.ia / admin1234
 
-`
+To open a MySQL shell inside the database container:
+
+```bash
 docker compose exec db mysql --default-character-set=utf8mb4 -u"$DB_USERNAME" -p"$DB_PASSWORD" "$DB_DATABASE"
-`
-
-Default login: admin@amnez.ia / admin123
+```
 
 ### Remote Server Prerequisite
 
@@ -115,7 +116,7 @@ DB_USERNAME=amnezia
 DB_PASSWORD=amnezia
 
 ADMIN_EMAIL=admin@amnez.ia
-ADMIN_PASSWORD=admin123
+ADMIN_PASSWORD=admin1234
 
 JWT_SECRET=your-secret-key-change-this
 ```
@@ -290,12 +291,24 @@ Run manually:
 docker compose exec web php /var/www/html/bin/check_traffic_limits.php
 ```
 
+### Telegram Bot
+
+A long-polling Telegram bot (`bin/telegram_bot.php`) can create clients and send their `.conf` files directly in Telegram. It runs inside the `web` container and is kept alive by `bin/telegram_bot_monitor.sh` (started by `/start.sh` plus a `*/3` cron keepalive).
+
+Configure it in `.env`:
+```
+TELEGRAM_BOT_TOKEN=<token-from-@BotFather>
+TELEGRAM_ALLOWED_IDS=<telegram_id|@username>,<telegram_id|@username>
+```
+
+Only allow-listed senders can use the bot; they act as the `ADMIN_EMAIL` admin. The bot re-reads `.env` on every message, so allow-list changes take effect without a restart. The `/servers` page shows a live status badge and a «Перезапустить» (restart) button.
+
 ### API Authentication
 
 Get JWT token:
 ```bash
 curl -X POST http://localhost:8082/api/auth/token \
-  -d "email=admin@amnez.ia&password=admin123"
+  -d "email=admin@amnez.ia&password=admin1234"
 ```
 
 Use token:
@@ -318,17 +331,27 @@ DELETE /api/tokens/{id}             - Revoke token
 ```
 GET    /api/servers                 - List all servers
 POST   /api/servers/create          - Create new server
-       Parameters: name, host, port, username, password
+       Parameters: name, host, port, username, password (or SSH key)
 DELETE /api/servers/{id}/delete     - Delete server by ID
 GET    /api/servers/{id}/clients    - List clients on server
+GET    /api/servers/{id}/online     - List online clients on server
+GET    /api/servers/{id}/metrics    - Server metrics
 ```
 
 ### Protocols
 ```
 GET    /api/protocols/active        - List all available protocols (JWT-friendly, includes protocol IDs)
 GET    /api/protocols               - Protocol management endpoint (requires session admin auth, not JWT)
+GET    /api/protocols/{id}          - Get single protocol
+POST   /api/protocols               - Create protocol
+PUT    /api/protocols/{id}          - Update protocol
+DELETE /api/protocols/{id}          - Delete protocol
 GET    /api/servers/{id}/protocols  - List installed protocols on server
-POST   /api/servers/{id}/protocols/install - Install protocol
+POST   /api/servers/{id}/protocols/install       - Install protocol
+POST   /api/servers/{id}/protocols/selftest      - Run protocol self-test
+POST   /api/servers/{id}/protocols/diagnose-handshake - Diagnose client handshake
+POST   /api/servers/{id}/protocols/uninstall-all - Uninstall all protocols
+POST   /api/servers/{id}/protocols/{slug}/uninstall - Uninstall a protocol
 ```
 
 ### Clients
@@ -336,12 +359,13 @@ POST   /api/servers/{id}/protocols/install - Install protocol
 GET    /api/clients                 - List all clients
 GET    /api/clients/{id}/details    - Get client details with stats, config and QR code
 GET    /api/clients/{id}/qr         - Get client QR code
+GET    /api/clients/{id}/metrics    - Client traffic metrics
 POST   /api/clients/create          - Create new client (returns config and QR code)
-       Parameters: server_id, name, protocol_id (optional, default: installed), expires_in_days (optional)
+       Parameters: server_id, name, protocol_id (optional, default: installed), expires_in_days (optional), traffic_limit_bytes (optional)
+POST   /api/clients/{id}/regenerate-config - Regenerate client config
 POST   /api/clients/{id}/revoke     - Revoke client access
 POST   /api/clients/{id}/restore    - Restore client access
 DELETE /api/clients/{id}/delete     - Delete client by ID (removes from DB and server)
-POST   /api/clients/{id}/set-expiration  - Set client expiration date
 POST   /api/clients/{id}/set-expiration  - Set client expiration date
        Parameters: expires_at (Y-m-d H:i:s or null)
 POST   /api/clients/{id}/extend     - Extend client expiration
@@ -360,7 +384,7 @@ POST   /api/servers/{id}/backup     - Create server backup
 GET    /api/servers/{id}/backups    - List server backups
 POST   /api/servers/{id}/restore    - Restore from backup
        Parameters: backup_id
-DELETE /api/backups/{id}             - Delete backup
+DELETE /api/backups/{id}            - Delete backup
 ```
 
 ### Panel Import
@@ -368,6 +392,22 @@ DELETE /api/backups/{id}             - Delete backup
 POST   /api/servers/{id}/import     - Import clients from existing panel
        Parameters: panel_type (wg-easy|3x-ui), backup_file (multipart/form-data)
 GET    /api/servers/{id}/imports    - Get import history for server
+```
+
+### AI Assistant
+```
+POST   /api/ai/assist               - Ask AI for a protocol configuration
+GET    /api/ai/models               - List available AI models
+POST   /api/ai/test-model           - Test an AI model
+GET    /api/protocols/{id}/ai-history - AI generation history for a protocol
+POST   /api/ai/generations/{id}/apply - Apply an AI generation
+```
+
+### Translations
+```
+GET    /api/translations/stats      - Translation coverage stats
+POST   /api/translations/auto-translate - Auto-translate untranslated strings
+GET    /api/translations/export/{lang} - Export translations for a language
 ```
 
 ## Translation
@@ -382,22 +422,36 @@ Or translate via web interface: Settings → Auto-translate
 ## Structure
 
 ```
-public/index.php      - Routes
-inc/                  - Core classes
-  Auth.php           - Authentication
-  DB.php             - Database connection
-  Router.php         - URL routing
-  View.php           - Twig templates
-  VpnServer.php      - Server management
-  VpnClient.php      - Client management
-  Translator.php     - Multi-language
-  JWT.php            - Token auth
-  QrUtil.php         - QR code generation
-  PanelImporter.php  - Import from wg-easy/3x-ui
-  InstallProtocolManager.php - Protocol management core
-  OpenRouterService.php - AI integration
-templates/           - Twig templates
-migrations/          - SQL migrations (executed in alphabetical order)
+public/index.php              - Single entry point: all routes live here (~4500 lines)
+inc/                          - Core classes (global, no namespaces)
+  Auth.php                    - Authentication, admin seeding
+  Config.php                  - .env / getenv configuration loader
+  DB.php                      - PDO database connection (reads Config/env)
+  Router.php                  - URL routing (pattern-matching)
+  View.php                    - Twig template rendering
+  VpnServer.php               - Server management & SSH deployment
+  VpnClient.php               - Client management
+  Translator.php              - Multi-language
+  JWT.php                     - JWT API authentication (firebase/php-jwt)
+  QrUtil.php                  - Amnezia-compatible QR encoding
+  PanelImporter.php           - Import from wg-easy/3x-ui
+  InstallProtocolManager.php  - Protocol install scripts
+  ProtocolService.php         - Protocol CRUD
+  ServerMonitoring.php        - Metrics & monitoring
+  BackupLibrary.php           - Server backup/restore
+  Ssh.php                     - SSH command execution
+  LdapSync.php                - LDAP/AD sync
+  OpenRouterService.php       - AI integration (OpenRouter)
+  TelegramBot.php             - Telegram bot (long-polling)
+  Logger.php                  - Logging
+  Awg31Parameters.php         - AWG obfuscation parameters
+controllers/                  - Feature controllers (Settings, ProtocolManagement, AI, Logs, Scenario)
+bin/                          - CLI/cron scripts (expiry checks, metrics, LDAP sync, Telegram bot)
+templates/                    - Twig templates
+migrations/                   - SQL migrations (applied alphabetically, idempotent)
+docs/                         - Protocol docs (awg31.md)
+examples/                     - Import examples (wg-easy, 3x-ui)
+scripts/                      - Dev/debug scripts
 ```
 
 ## Tech Stack
@@ -415,5 +469,3 @@ MIT
 ## Support the Project
 
 If you find this project helpful, you can support its development through a donation via Tribute: https://t.me/tribute/app?startapp=dzX1
-
-# amneziavpnphp

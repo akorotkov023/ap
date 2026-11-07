@@ -1,692 +1,346 @@
 # Developer Guide
 
-Guide for developers contributing to Amnezia VPN Web Panel.
+Guide for contributing to the Amnezia VPN Web Panel.
+
+## Overview
+
+The panel is plain **PHP 8.2 + MySQL 8.0** with **no framework** (not Laravel/Symfony):
+
+- A custom micro-router (`inc/Router.php`) with **all routes defined in `public/index.php`** (~4500 lines).
+- **Twig** templates.
+- Global classes in `inc/` (and `controllers/`) — **no namespaces**.
+- Fully Dockerized (three services: `web`, `db`, `dind`).
+
+There is **no test suite, linter, typechecker, or CI**. No Composer scripts, no PHPUnit. The only fast static check is PHP lint:
+
+```bash
+docker compose exec web php -l <file>
+```
+
+Verify changes manually.
+
+## Prerequisites
+
+- Docker + Docker Compose
+- (Optional) local PHP 8.2 + Composer + MySQL 8.0 for non-Docker development
 
 ## Development Setup
 
-### Local Development (without Docker)
+### Docker (recommended)
 
-1. **Install PHP 8.2+**
 ```bash
-# Ubuntu/Debian
-sudo apt install php8.2 php8.2-cli php8.2-mysql php8.2-gd php8.2-curl php8.2-mbstring
-
-# macOS (Homebrew)
-brew install php@8.2
+cp .env.local .env          # first time; .env is gitignored and required
+docker compose up -d --build
+docker compose exec web composer install
+# app: http://localhost:8082
 ```
 
-2. **Install MySQL 8.0**
-```bash
-# Ubuntu/Debian
-sudo apt install mysql-server-8.0
+DB migrations are auto-applied by the MySQL entrypoint **only on a fresh volume**. For an existing install, apply them manually:
 
-# macOS
-brew install mysql@8.0
+```bash
+for f in migrations/*.sql; do
+  docker compose exec -T db mysql --default-character-set=utf8mb4 -u"$DB_USERNAME" -p"$DB_PASSWORD" "$DB_DATABASE" < "$f"
+done
 ```
 
-3. **Install Composer**
-```bash
-curl -sS https://getcomposer.org/installer | php
-sudo mv composer.phar /usr/local/bin/composer
-```
+### Local (without Docker)
 
-4. **Clone and Setup**
+1. Install PHP 8.2 with extensions: `pdo_mysql`, `mbstring`, `gd`, `curl`, `exif`, `pcntl`, `bcmath`, `ldap` (optional).
+2. Install MySQL 8.0 and create the database/user from `.env.local`.
+3. Run Composer and the built-in server:
+
 ```bash
-git clone <repo-url>
-cd amnezia-web-panel
 composer install
+DB_HOST=127.0.0.1 php -S localhost:8000 -t public
 ```
 
-5. **Configure Database**
-```bash
-mysql -u root -p
-
-CREATE DATABASE amnezia_panel CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-CREATE USER 'amnezia'@'localhost' IDENTIFIED BY 'amnezia123';
-GRANT ALL PRIVILEGES ON amnezia_panel.* TO 'amnezia'@'localhost';
-FLUSH PRIVILEGES;
-
-USE amnezia_panel;
-SOURCE migrations/001_init.sql;
-SOURCE migrations/002_translations_ru.sql;
-SOURCE migrations/003_translations_es.sql;
-SOURCE migrations/004_translations_de.sql;
-SOURCE migrations/005_translations_fr.sql;
-SOURCE migrations/006_translations_zh.sql;
-```
-
-6. **Update Database Config**
-
-Edit `inc/DB.php`:
-```php
-private static $config = [
-    'host' => 'localhost',  // Change from 'db'
-    'dbname' => 'amnezia_panel',
-    'user' => 'amnezia',
-    'password' => 'amnezia123',
-    'charset' => 'utf8mb4',
-];
-```
-
-7. **Run Development Server**
-```bash
-cd public
-php -S localhost:8000
-```
-
-Access: `http://localhost:8000`
-
-### Docker Development (Recommended)
-
-```bash
-docker compose up -d
-```
-
-Access: `http://localhost:8082`
-
-**Live code editing**: Mount project as volume (already configured in docker-compose.yml)
+`inc/DB.php` reads `DB_HOST` from `Config`/env and defaults to `127.0.0.1`, so it works outside Docker as long as the DB credentials are exported.
 
 ## Project Architecture
 
-### MVC Pattern
+There is no MVC in the classic sense. The request flow is:
 
 ```
-Request → Router → Controller Logic → Model → Database
-                      ↓
-                   View (Twig) → Response
+Request → public/index.php (Router dispatch → inline route closure)
+                     ↓
+              inc/*.php classes (DB, Auth, VpnServer, VpnClient, ...)
+                     ↓
+              Twig template (View::render)  or  JSON response (API)
 ```
 
-### Core Components
+### Entry point (`public/index.php`)
 
-#### 1. Router (`inc/Router.php`)
+The single entrypoint. It:
 
-Simple pattern-matching router:
+1. Starts the session.
+2. `require_once`s the core classes from `inc/` explicitly.
+3. Loads env config via `Config::load(__DIR__ . '/../.env')`.
+4. Verifies the DB connection and seeds the admin user (`Auth::seedAdmin`).
+5. Registers **all routes** via `Router::get/post/put/delete`.
+
+> When you add a new `inc/` class, add an explicit `require_once` in `index.php` (and/or the consuming `bin/` script). The Composer PSR-4 autoloader (`"": "inc/"`) is **not** relied on for `inc/`.
+
+### Router (`inc/Router.php`)
+
+Pattern-matching router:
 
 ```php
-Router::get('/path/{param}', function($params) {
-    // Handler logic
-    echo $params['param'];
+Router::get('/servers/{id}', function ($params) {
+    $serverId = (int)$params['id'];
+    // ...
 });
 
-Router::post('/form', function() {
-    // Handle POST
-    $data = $_POST['field'];
+Router::post('/api/clients/{id}/revoke', function ($params) {
+    requireApiAuth();
+    // ...
 });
 ```
 
-#### 2. Database (`inc/DB.php`)
+Methods: `Router::get()`, `Router::post()`, `Router::put()`, `Router::delete()`. Route variables use `{name}` and are passed to the closure as an associative array. Matching is exact (no trailing slash). The last route with no match returns `404 Not Found`.
 
-Singleton PDO connection:
+### Configuration (`inc/Config.php`)
+
+Reads `.env` via `Config::load()` and falls back to `getenv()`. Access values with:
+
+```php
+$value = Config::get('KEY', 'default');
+```
+
+`Config::load()` also `putenv()`s every key, so `getenv()` works too.
+
+### Database (`inc/DB.php`)
+
+Singleton PDO connection. Reads `DB_HOST`, `DB_PORT`, `DB_DATABASE`, `DB_USERNAME`, `DB_PASSWORD` from `Config`/env (not hardcoded):
 
 ```php
 $pdo = DB::conn();
 $stmt = $pdo->prepare('SELECT * FROM users WHERE id = ?');
 $stmt->execute([$id]);
+$user = $stmt->fetch(); // FETCH_ASSOC by default
+```
+
+Options: `ERRMODE_EXCEPTION`, `FETCH_ASSOC`, `EMULATE_PREPARES => false`, `SET NAMES utf8mb4`.
+
+### Authentication (`inc/Auth.php`)
+
+Session-based auth for the admin UI (with optional LDAP fallback):
+
+```php
+Auth::login($email, $password);   // bool; tries LDAP first, then local DB
+Auth::logout();
+Auth::check();                    // bool — session has user_id?
+Auth::user();                     // ?array — current user row
+Auth::isAdmin();                  // bool
+Auth::seedAdmin($email, $pass);   // idempotent; creates the admin and re-syncs the password if ADMIN_PASSWORD changes
+Auth::listUsers();                // array
+Auth::setRole($userId, $role);    // 'admin' | 'user'
+Auth::getUserByEmail($email);     // ?array
+```
+
+The admin account is auto-seeded on first request from `ADMIN_EMAIL`/`ADMIN_PASSWORD`. `ADMIN_PASSWORD` is authoritative: when it changes in `.env`, the admin's password is re-synced on the next request. The sync is detected via a SHA-256 marker stored in the `settings` table (namespace `admin_seed`, key `password_marker`), so a password changed through the UI is preserved unless `.env` itself changes — no bcrypt re-hash runs on every request. Self-registration is off unless `ALLOW_REGISTRATION=true`.
+
+In `index.php`, route handlers use helpers: `requireAuth()`, `requireAdmin()`, `requireApiAuth()`, `getAuthUser()`.
+
+### API auth (`inc/JWT.php`)
+
+The `/api/*` routes authenticate via JWT (`firebase/php-jwt` v7), falling back to session. Token:
+
+```bash
+curl -X POST http://localhost:8082/api/auth/token \
+  -d "email=admin@amnez.ia&password=admin1234"
+```
+
+> Exception: `GET /api/protocols` (and the other `/api/protocols*` admin routes) use **session admin auth, not JWT**.
+
+Persistent API tokens are managed via `/api/tokens`.
+
+### Views (`inc/View.php`)
+
+Twig rendering:
+
+```php
+View::init(__DIR__ . '/../templates', $globals);  // called once in index.php
+View::render('servers/view.twig', ['server' => $server]);
+```
+
+Auto-escaping is enabled (`autoescape => 'html'`). Custom Twig helpers are registered: the `t()` translation function, `trans` filter, `getFlag()` and `bytes_format` filter.
+
+### Models — `VpnServer` and `VpnClient`
+
+These are global classes, not framework models. `VpnServer`:
+
+```php
+$serverId = VpnServer::create([/* name, host, port, username, auth_type, ... */]);
+$server = new VpnServer($serverId);
+$server->deploy();                    // SSH + docker to the remote host
+$server->testConnection();            // bool
+$server->getData();                   // ?array
+$server->executeCommand($cmd);        // runs over SSH
+$server->createBackup($userId);       // int backup id
+$server->restoreBackup($backupId);
+VpnServer::listByUser($userId);
+VpnServer::listAll();
+```
+
+`VpnClient`:
+
+```php
+$clientId = VpnClient::create($serverId, $userId, $name, $expiresInDays, $protocolId);
+$client = new VpnClient($clientId);
+$client->getConfig();                  // config text
+$client->getQRCode();                  // data URI
+$client->revoke();
+$client->restore();
+$client->syncStats();
+$client->setTrafficLimit($limitBytes);
+VpnClient::setExpiration($clientId, $expiresAt);
+VpnClient::extendExpiration($clientId, $days);
+VpnClient::getExpiringClients($days);
+VpnClient::disableExpiredClients();
+VpnClient::disableClientsOverLimit();
+VpnClient::listByServer($serverId);
+VpnClient::listByUser($userId);
+```
+
+### Feature controllers (`controllers/`)
+
+Larger features are split into controllers (`SettingsController`, `ProtocolManagementController`, `AIController`, `LogsController`, `ScenarioController`). These are global classes too, required **lazily inside the route closure**:
+
+```php
+Router::get('/settings/protocols', function () {
+    require_once __DIR__ . '/../controllers/ProtocolManagementController.php';
+    (new ProtocolManagementController())->index();
+});
+```
+
+> When adding a controller, require it in the route closure. The PSR-4 prefix only maps `"" => "inc/"`, so `controllers/` is **not** autoloadable.
+
+## Migrations
+
+SQL files in `migrations/` are applied **alphabetically** (by MySQL's `docker-entrypoint-initdb.d`) on a fresh volume. Keep them **idempotent** — use `ON DUPLICATE KEY UPDATE` for INSERTs.
+
+The admin is **not** created by a migration; it is seeded at runtime by `Auth::seedAdmin`.
+
+## Adding a Feature
+
+### Example: add a per-server "note" field
+
+**1. Add a migration** (`migrations/073_add_server_note.sql`):
+
+```sql
+ALTER TABLE vpn_servers ADD COLUMN note TEXT NULL;
+```
+
+**2. Add a method to the class** (`inc/VpnServer.php`):
+
+```php
+public function setNote(string $note): bool {
+    $stmt = DB::conn()->prepare('UPDATE vpn_servers SET note = ? WHERE id = ?');
+    return $stmt->execute([$note, $this->getId()]);
+}
+```
+
+**3. Add a route** (`public/index.php`):
+
+```php
+Router::post('/servers/{id}/note', function ($params) {
+    requireAuth();
+    $server = new VpnServer((int)$params['id']);
+    $server->setNote(trim($_POST['note'] ?? ''));
+    redirect('/servers/' . $server->getId());
+});
+```
+
+**4. Add the field to a template** (`templates/servers/view.twig`).
+
+**5. Verify** with `docker compose exec web php -l public/index.php` and manual testing.
+
+## Code Style
+
+The codebase uses global classes with no namespaces. Keep new code consistent with the surrounding files:
+
+- **PHP**: plain procedural-ish class methods, prepared statements, `password_hash()`/`password_verify()`.
+- **SQL**: prepared statements everywhere; uppercase keywords.
+- **Twig**: rely on auto-escaping; use `{{ var|raw }}` only for trusted content.
+- **Config**: read via `Config::get()`, never hardcode credentials.
+
+Example — safe DB access:
+
+```php
+$stmt = DB::conn()->prepare('SELECT * FROM users WHERE email = ?');
+$stmt->execute([$email]);
 $user = $stmt->fetch();
 ```
 
-#### 3. Authentication (`inc/Auth.php`)
-
-Session-based auth:
-
-```php
-// Login
-Auth::login($email, $password);
-
-// Get current user
-$user = Auth::user();
-
-// Check admin
-if (Auth::isAdmin()) {
-    // Admin logic
-}
-
-// Logout
-Auth::logout();
-
-// Middleware
-requireAuth(); // In route handler
-```
-
-#### 4. Views (`inc/View.php`)
-
-Twig template rendering:
-
-```php
-View::render('template.twig', [
-    'var1' => 'value1',
-    'var2' => 'value2',
-]);
-```
-
-#### 5. Models
-
-**VpnServer** (`inc/VpnServer.php`):
-```php
-// Create and deploy server
-$serverId = VpnServer::create($userId, $name, $host, $port, $username, $password);
-
-// Get server instance
-$server = new VpnServer($serverId);
-$data = $server->getData();
-
-// Deploy to remote server
-$server->deploy();
-
-// List servers
-$servers = VpnServer::listAll();
-$userServers = VpnServer::listByUser($userId);
-```
-
-**VpnClient** (`inc/VpnClient.php`):
-```php
-// Create client
-$clientId = VpnClient::create($serverId, $userId, $name);
-
-// Get client instance
-$client = new VpnClient($clientId);
-$config = $client->getConfig();
-$qrCode = $client->getQRCode();
-
-// List clients
-$clients = VpnClient::listByServer($serverId);
-$userClients = VpnClient::listByUser($userId);
-```
-
-#### 6. QR Code Utility (`inc/QrUtil.php`)
-
-Amnezia-compatible QR encoding:
-
-```php
-require_once 'inc/QrUtil.php';
-
-// From WireGuard config text
-$payload = QrUtil::encodeOldPayloadFromConf($configText);
-
-// Generate PNG data URI
-$qrImage = QrUtil::pngBase64($payload);
-
-// Use in template
-echo '<img src="' . $qrImage . '">';
-```
-
-## Adding New Features
-
-### Example: Add Server Statistics
-
-**1. Add database column**
-
-Create migration `migrations/002_add_stats.sql`:
-```sql
-ALTER TABLE vpn_servers ADD COLUMN stats_json TEXT;
-```
-
-**2. Add method to model**
-
-Edit `inc/VpnServer.php`:
-```php
-public function getStats(): array {
-    if (!$this->data['stats_json']) {
-        return [];
-    }
-    return json_decode($this->data['stats_json'], true);
-}
-
-public function updateStats(): void {
-    $stats = $this->collectStatsFromServer();
-    
-    $pdo = DB::conn();
-    $stmt = $pdo->prepare('UPDATE vpn_servers SET stats_json = ? WHERE id = ?');
-    $stmt->execute([json_encode($stats), $this->serverId]);
-}
-
-private function collectStatsFromServer(): array {
-    // SSH to server, get stats
-    // ...
-    return ['cpu' => 45, 'memory' => 60, 'bandwidth' => 1024];
-}
-```
-
-**3. Add route**
-
-Edit `public/index.php`:
-```php
-Router::get('/servers/{id}/stats', function($params) {
-    requireAuth();
-    $serverId = (int)$params['id'];
-    
-    $server = new VpnServer($serverId);
-    $stats = $server->getStats();
-    
-    header('Content-Type: application/json');
-    echo json_encode($stats);
-});
-```
-
-**4. Add template**
-
-Create `templates/servers/stats.twig`:
-```twig
-{% extends "layout.twig" %}
-
-{% block content %}
-<div class="max-w-4xl mx-auto">
-  <h1>Server Statistics</h1>
-  
-  <div class="grid grid-cols-3 gap-4">
-    <div class="bg-white p-4 rounded shadow">
-      <h3>CPU Usage</h3>
-      <p class="text-3xl">{{ stats.cpu }}%</p>
-    </div>
-    <!-- More stats -->
-  </div>
-</div>
-{% endblock %}
-```
-
-**5. Update navigation**
-
-Edit `templates/layout.twig`:
-```twig
-<a href="/servers/{{ server.id }}/stats">Statistics</a>
-```
-
-## Code Style Guidelines
-
-### PHP
-
-Follow PSR-12 coding standard:
-
-```php
-<?php
-
-namespace MyNamespace;
-
-use AnotherNamespace\SomeClass;
-
-class MyClass
-{
-    private string $property;
-    
-    public function __construct(string $param)
-    {
-        $this->property = $param;
-    }
-    
-    public function method(int $arg): bool
-    {
-        if ($arg > 0) {
-            return true;
-        }
-        
-        return false;
-    }
-}
-```
-
-### SQL
-
-```sql
--- Use uppercase keywords
-SELECT id, name, created_at
-FROM vpn_servers
-WHERE status = 'active'
-ORDER BY created_at DESC;
-
--- Prepared statements always
-$stmt = $pdo->prepare('SELECT * FROM users WHERE email = ?');
-$stmt->execute([$email]);
-```
-
-### JavaScript
-
-```javascript
-// Use modern ES6+
-const fetchData = async () => {
-  try {
-    const response = await fetch('/api/servers');
-    const data = await response.json();
-    console.log(data);
-  } catch (error) {
-    console.error('Error:', error);
-  }
-};
-
-// Event listeners
-document.getElementById('btn').addEventListener('click', () => {
-  fetchData();
-});
-```
-
-### Twig
-
-```twig
-{# Comments #}
-
-{# Variables #}
-{{ variable }}
-{{ object.property }}
-{{ array[0] }}
-
-{# Control structures #}
-{% if condition %}
-  Content
-{% endif %}
-
-{% for item in items %}
-  {{ item.name }}
-{% endfor %}
-
-{# Filters #}
-{{ text|upper }}
-{{ html|raw }}  {# Careful with XSS! #}
-```
-
-## Security Best Practices
-
-### 1. SQL Injection Prevention
-
-❌ **Never do this:**
-```php
-$sql = "SELECT * FROM users WHERE email = '$email'";
-```
-
-✅ **Always use prepared statements:**
-```php
-$stmt = $pdo->prepare('SELECT * FROM users WHERE email = ?');
-$stmt->execute([$email]);
-```
-
-### 2. XSS Prevention
-
-❌ **Never output unescaped:**
-```php
-echo $_GET['name'];  // Dangerous!
-```
-
-✅ **Escape output:**
-```php
-echo htmlspecialchars($_GET['name'], ENT_QUOTES, 'UTF-8');
-```
-
-In Twig (auto-escapes by default):
-```twig
-{{ user_input }}  {# Safe #}
-{{ user_input|raw }}  {# Unsafe - use carefully #}
-```
-
-### 3. CSRF Protection
-
-TODO: Implement token-based CSRF protection:
-
-```php
-// Generate token
-$_SESSION['csrf_token'] = bin2hex(random_bytes(32));
-
-// In form
-<input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-
-// Verify
-if ($_POST['csrf_token'] !== $_SESSION['csrf_token']) {
-    die('CSRF token mismatch');
-}
-```
-
-### 4. Password Hashing
-
-✅ **Always use bcrypt:**
-```php
-// Hash
-$hash = password_hash($password, PASSWORD_BCRYPT);
-
-// Verify
-if (password_verify($password, $hash)) {
-    // Correct
-}
-```
-
-### 5. Input Validation
-
-```php
-// Email
-if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
-    throw new Exception('Invalid email');
-}
-
-// Integer
-$id = (int)$_GET['id'];
-
-// String length
-if (strlen($name) < 3 || strlen($name) > 50) {
-    throw new Exception('Invalid name length');
-}
-```
-
-## Testing
-
-### Unit Tests (TODO)
-
-```php
-// tests/VpnServerTest.php
-use PHPUnit\Framework\TestCase;
-
-class VpnServerTest extends TestCase
-{
-    public function testCreate()
-    {
-        $serverId = VpnServer::create(1, 'Test', '192.168.1.1', 22, 'root', 'pass');
-        $this->assertIsInt($serverId);
-        $this->assertGreaterThan(0, $serverId);
-    }
-}
-```
-
-Run tests:
-```bash
-composer require --dev phpunit/phpunit
-./vendor/bin/phpunit tests/
-```
-
-### Manual Testing
-
-See [TESTING.md](TESTING.md) for comprehensive testing guide.
+## Security Notes
+
+- **No CSRF protection** (documented TODO). Session auth is used for admin UI; JWT for `/api/*`.
+- Passwords are hashed with `password_hash(..., PASSWORD_DEFAULT)` (bcrypt/argon2 depending on PHP).
+- SQL injection is prevented via prepared statements and `EMULATE_PREPARES => false`.
+- XSS is mitigated by Twig auto-escaping.
+- Report vulnerabilities privately — see [`SECURITY.md`](SECURITY.md).
+
+## Docker Services
+
+- **web** — PHP 8.2 Apache, mounts the project at `/var/www/html`, exposes `8082:80`.
+- **db** — MySQL 8.0, exposes `3309:3306`, runs migrations from `./migrations`.
+- **dind** — Docker-in-Docker; `web` sets `DOCKER_HOST=tcp://dind:2375` and deploys protocols to remote servers over SSH + the docker CLI.
+
+### Cron jobs (baked into the Dockerfile)
+
+| Schedule | Command | Purpose |
+|----------|---------|---------|
+| hourly   | `bin/check_expired_clients.php` | Disable expired clients |
+| hourly   | `bin/check_traffic_limits.php` | Disable clients over their traffic limit |
+| `*/30`   | `bin/sync_ldap_users.php` | LDAP user sync |
+| `*/3`    | `bin/monitor_metrics.sh` | Keep the metrics collector alive |
+| `*/3`    | `bin/telegram_bot_monitor.sh` | Keep the Telegram bot alive |
+
+Restart cron if needed: `docker compose exec web service cron start`.
+
+## CLI / Cron Scripts (`bin/`)
+
+| Script | Purpose |
+|--------|---------|
+| `check_expired_clients.php` | Disable expired clients |
+| `check_traffic_limits.php` | Disable clients over traffic limit |
+| `collect_metrics.php` | Collect metrics (run by `monitor_metrics.sh`) |
+| `sync_ldap_users.php` | Sync LDAP users |
+| `translate.php` / `translate_all.php` | Translation helpers |
+| `telegram_bot.php` | Telegram bot (long-polling) |
+| `telegram_bot_monitor.sh` | Keepalive wrapper for the bot |
+| `check_server_ssh_fields.php` | Inspect SSH fields on servers |
 
 ## Debugging
 
-### Enable Error Display
-
-In development, edit `public/index.php`:
-
-```php
-ini_set('display_errors', 1);
-ini_set('display_startup_errors', 1);
-error_reporting(E_ALL);
-```
-
-### Database Queries
-
-```php
-// Enable query logging
-$pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
-
-try {
-    $stmt = $pdo->prepare($sql);
-    $stmt->execute($params);
-} catch (PDOException $e) {
-    error_log("SQL Error: " . $e->getMessage());
-    error_log("Query: $sql");
-    error_log("Params: " . print_r($params, true));
-    throw $e;
-}
-```
-
-### SSH Commands
-
-```php
-// Add debug output
-$cmd = "your command";
-error_log("Executing SSH command: $cmd");
-$output = shell_exec($sshCmd);
-error_log("SSH output: $output");
-```
-
-### Docker Logs
+### Logs
 
 ```bash
-# Web container logs
-docker compose logs -f web
-
-# Database logs
-docker compose logs -f db
-
-# Last 100 lines
-docker compose logs --tail=100 web
+docker compose logs -f web        # web container
+docker compose logs -f db         # database
+docker compose exec web tail -f /var/log/cron.log          # cron output
+docker compose exec web tail -f /var/log/metrics_collector.log
+docker compose exec web tail -f /var/log/ldap_sync.log
 ```
 
-## API Development
+### Quick checks
 
-### Adding New Endpoint
-
-```php
-// In public/index.php
-
-Router::post('/api/clients', function() {
-    // TODO: Verify JWT token
-    
-    header('Content-Type: application/json');
-    
-    try {
-        $serverId = (int)$_POST['server_id'];
-        $name = trim($_POST['name'] ?? '');
-        
-        if (!$serverId || !$name) {
-            http_response_code(400);
-            echo json_encode(['error' => 'Missing parameters']);
-            return;
-        }
-        
-        $user = Auth::user();
-        $clientId = VpnClient::create($serverId, $user['id'], $name);
-        
-        $client = new VpnClient($clientId);
-        
-        echo json_encode([
-            'success' => true,
-            'client' => $client->getData(),
-        ]);
-        
-    } catch (Exception $e) {
-        http_response_code(500);
-        echo json_encode(['error' => $e->getMessage()]);
-    }
-});
+```bash
+docker compose exec web php -l public/index.php            # lint one file
+docker compose exec web php -r "require 'inc/Config.php'; require 'inc/DB.php'; var_dump(DB::conn() instanceof PDO);"
 ```
 
-### JWT Authentication (TODO)
+## Deployment / Updating
 
-```php
-use Firebase\JWT\JWT;
-
-// Generate token
-$payload = [
-    'user_id' => $user['id'],
-    'exp' => time() + 3600, // 1 hour
-];
-$token = JWT::encode($payload, $secretKey, 'HS256');
-
-// Verify token
-try {
-    $decoded = JWT::decode($token, $secretKey, ['HS256']);
-    $userId = $decoded->user_id;
-} catch (Exception $e) {
-    http_response_code(401);
-    echo json_encode(['error' => 'Invalid token']);
-    exit;
-}
-```
-
-## Deployment
-
-### Production Checklist
-
-- [ ] Change default admin password
-- [ ] Update database passwords in docker-compose.yml
-- [ ] Set up HTTPS (nginx reverse proxy + Let's Encrypt)
-- [ ] Disable error display
-- [ ] Enable error logging
-- [ ] Set up automated backups
-- [ ] Configure firewall
-- [ ] Set up monitoring
-- [ ] Review security settings
-- [ ] Test disaster recovery
-
-### Environment Variables
-
-Create `.env.production`:
-```env
-DB_HOST=db
-DB_NAME=amnezia_panel
-DB_USER=amnezia
-DB_PASS=strong_random_password_here
-JWT_SECRET=another_strong_random_secret_here
-ADMIN_EMAIL=admin@yourdomain.com
-```
-
-Load in PHP:
-```php
-$dotenv = Dotenv\Dotenv::createImmutable(__DIR__);
-$dotenv->load();
-
-$dbPassword = $_ENV['DB_PASS'];
-```
-
-## Contributing
-
-1. Fork repository
-2. Create feature branch: `git checkout -b feature/my-feature`
-3. Make changes
-4. Write tests
-5. Commit: `git commit -am 'Add my feature'`
-6. Push: `git push origin feature/my-feature`
-7. Create Pull Request
-
-### Commit Message Format
-
-```
-type: subject
-
-body (optional)
-
-footer (optional)
-```
-
-Types:
-- `feat`: New feature
-- `fix`: Bug fix
-- `docs`: Documentation
-- `style`: Formatting
-- `refactor`: Code restructuring
-- `test`: Tests
-- `chore`: Maintenance
-
-Example:
-```
-feat: add server statistics dashboard
-
-- Added stats collection via SSH
-- Created stats API endpoint
-- Built statistics template
-- Updated navigation
-
-Closes #123
-```
+- `./update.sh` (repo root) is the in-place auto-updater for deployed panels: `./update.sh [--force] [--skip-backup] [--rollback[=VERSION]]`.
+- For a fresh install, see [`README.md`](README.md).
+- Production checklist: change the default admin password, set a strong `JWT_SECRET`, set up HTTPS in front of Apache, and review `.env`.
 
 ## Resources
 
 - [PHP Documentation](https://www.php.net/docs.php)
 - [MySQL Reference](https://dev.mysql.com/doc/)
 - [Twig Documentation](https://twig.symfony.com/doc/)
-- [Tailwind CSS](https://tailwindcss.com/docs)
 - [Docker Documentation](https://docs.docker.com/)
 - [WireGuard Protocol](https://www.wireguard.com/)
 - [Amnezia VPN GitHub](https://github.com/amnezia-vpn/amnezia-client)

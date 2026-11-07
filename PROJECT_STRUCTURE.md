@@ -1,583 +1,220 @@
 # Project Structure
 
-Complete file structure of Amnezia VPN Web Panel with descriptions.
+Complete file structure of the Amnezia VPN Web Panel with descriptions.
+
+> This document reflects the **current** layout. Some files referenced by older docs
+> (`CHANGELOG.md`, `TESTING.md`, `test_qr.php`, `public/.htaccess`, `.env.example`)
+> no longer exist.
 
 ```
-amnezia-web-panel/
+amnezia-vpn-web-panel/
 │
-├── 📄 README.md                    # Main project documentation
-├── 📄 CHANGELOG.md                 # Version history and changes
-├── 📄 LICENSE                      # MIT License
-├── 📄 TESTING.md                   # Testing guide
-├── 📄 DEVELOPER.md                 # Developer documentation
-├── 📄 .gitignore                   # Git ignore rules
-├── 📄 .env.example                 # Environment template
-├── 📄 .env                         # Environment variables (not in git)
+├── 📄 README.md                  # Main documentation (English)
+├── 📄 README_RU.md               # Russian documentation
+├── 📄 README_ZH.md               # Chinese documentation
+├── 📄 API_EXAMPLES.md            # REST API usage examples (curl, Python, JS)
+├── 📄 DEVELOPER.md               # Developer guide
+├── 📄 PROJECT_STRUCTURE.md       # This file
+├── 📄 RELEASE_NOTES.md           # Release notes (v2.0.1)
+├── 📄 SECURITY.md                # Security / vulnerability reporting policy
+├── 📄 LDAP_SETUP.md              # LDAP/Active Directory integration guide
+├── 📄 LICENSE                    # MIT License
+├── 📄 AGENTS.md                  # AI-agent working notes
 │
-├── 🐳 Docker Files
-│   ├── docker-compose.yml          # Docker orchestration
-│   ├── Dockerfile                  # PHP 8.2 Apache image
-│   └── apache.conf                 # Apache configuration
+├── 🐳 Docker / Environment
+│   ├── docker-compose.yml        # Services: web, db, dind
+│   ├── Dockerfile                # PHP 8.2 Apache image + cron + start.sh
+│   ├── apache.conf               # Apache virtual host (document root: public/)
+│   ├── my.cnf                    # MySQL configuration
+│   ├── .env.local                # Environment template (copy to .env)
+│   ├── .env                      # Actual environment (gitignored)
+│   ├── .dockerignore
+│   └── .gitignore
 │
 ├── 📦 Dependencies
-│   ├── composer.json               # PHP dependencies
-│   └── composer.lock               # Locked versions (generated)
+│   ├── composer.json             # PHP dependencies + PSR-4 autoload ("" => "inc/")
+│   └── composer.lock             # Locked versions (gitignored, present locally)
 │
-├── 💾 Database
-│   └── migrations/
-│       └── 001_init.sql            # Initial schema (users, servers, clients, etc.)
-│
-├── 🎨 Frontend (Public)
+├── 🖥️ Frontend (Entry Point)
 │   └── public/
-│       ├── index.php               # Main entry point & router
-│       └── .htaccess               # Apache URL rewriting
+│       └── index.php             # Single entry point — ALL routes live here (~4500 lines)
 │
-├── 🧩 Backend (Core Classes)
+├── 🧩 Backend (Core Classes — global, no namespaces)
 │   └── inc/
-│       ├── Router.php              # URL routing system
-│       ├── DB.php                  # Database connection (PDO)
-│       ├── Auth.php                # Authentication & sessions
-│       ├── View.php                # Twig template rendering
-│       ├── Config.php              # Configuration loader
-│       ├── VpnServer.php           # Server management & deployment
-│       ├── VpnClient.php           # Client config & QR generation
-│       └── QrUtil.php              # Amnezia QR encoding utility
+│       ├── Router.php            # Micro-router (get/post/put/delete, {param} matching)
+│       ├── Config.php            # .env loader + getenv fallback
+│       ├── DB.php                # PDO singleton (reads Config/env)
+│       ├── Auth.php              # Session auth, admin seeding, roles
+│       ├── JWT.php               # JWT API auth (firebase/php-jwt v7)
+│       ├── View.php              # Twig rendering + custom helpers
+│       ├── Translator.php        # Multi-language translation
+│       ├── VpnServer.php         # Server management & SSH deployment
+│       ├── VpnClient.php         # Client management, config & QR
+│       ├── QrUtil.php            # Amnezia-compatible QR encoding
+│       ├── PanelImporter.php     # Import from wg-easy / 3x-ui
+│       ├── InstallProtocolManager.php  # Protocol install scripts
+│       ├── ProtocolService.php   # Protocol CRUD
+│       ├── ServerMonitoring.php  # Metrics & monitoring
+│       ├── BackupLibrary.php     # Server backup / restore
+│       ├── Ssh.php               # SSH command execution
+│       ├── LdapSync.php          # LDAP/AD authentication & sync
+│       ├── OpenRouterService.php # AI integration (OpenRouter)
+│       ├── TelegramBot.php       # Telegram bot (long-polling)
+│       ├── Logger.php            # Logging
+│       └── Awg31Parameters.php   # AWG obfuscation parameters
 │
-├── 🖼️ Templates (Views)
+├── 🎛️ Feature Controllers (global classes, required lazily in route closures)
+│   └── controllers/
+│       ├── SettingsController.php
+│       ├── ProtocolManagementController.php
+│       ├── AIController.php
+│       ├── LogsController.php
+│       └── ScenarioController.php
+│
+├── 🖼️ Templates (Twig)
 │   └── templates/
-│       ├── layout.twig             # Base layout (header, nav, footer)
-│       ├── login.twig              # Login page
-│       ├── register.twig           # Registration page
-│       ├── dashboard.twig          # User dashboard
+│       ├── layout.twig           # Base layout
+│       ├── login.twig            # Login page
+│       ├── register.twig         # Registration page
+│       ├── dashboard.twig        # Dashboard
+│       ├── settings.twig         # Settings
+│       ├── settings_old.twig     # Legacy settings page
 │       ├── servers/
-│       │   ├── index.twig          # Server list
-│       │   ├── create.twig         # Add server form
-│       │   ├── deploy.twig         # Deployment progress
-│       │   └── view.twig           # Server details & client management
-│       └── clients/
-│           └── view.twig           # Client config & QR code
+│       │   ├── index.twig        # Server list
+│       │   ├── create.twig       # Add-server form
+│       │   ├── deploy.twig       # Deployment progress
+│       │   ├── view.twig         # Server details & clients
+│       │   └── monitoring.twig   # Server monitoring
+│       ├── clients/
+│       │   └── view.twig         # Client config & QR code
+│       ├── settings/
+│       │   ├── ldap.twig
+│       │   ├── logs.twig
+│       │   ├── protocol_form.twig
+│       │   ├── protocols_management.twig
+│       │   ├── protocol_template_editor.twig
+│       │   ├── scenario_form.twig
+│       │   ├── scenarios.twig
+│       │   └── scenario_view.twig
+│       ├── ai/
+│       │   └── preview_generation.twig
+│       └── tools/
+│           └── qr_decode.twig
 │
-└── 🧪 Testing
-    ├── test_qr.php                 # QR code generation test
-    └── test_qr.png                 # Generated test QR (not in git)
+├── 💾 Database Migrations
+│   └── migrations/               # SQL files, applied alphabetically (idempotent)
+│       ├── 000_create_user.sql … 072_repair_mojibake_translations.sql
+│       └── README.md             # Migration guide
+│
+├── 🔧 CLI / Cron Scripts
+│   └── bin/
+│       ├── check_expired_clients.php   # Disable expired clients (hourly)
+│       ├── check_traffic_limits.php    # Disable over-limit clients (hourly)
+│       ├── collect_metrics.php         # Metrics collector
+│       ├── monitor_metrics.sh          # Metrics keepalive (every 3 min)
+│       ├── sync_ldap_users.php         # LDAP sync (every 30 min)
+│       ├── translate.php               # Translation helper
+│       ├── translate_all.php           # Translate everything
+│       ├── telegram_bot.php            # Telegram bot (long-polling)
+│       ├── telegram_bot_monitor.sh     # Bot keepalive (every 3 min)
+│       └── check_server_ssh_fields.php # Inspect server SSH fields
+│
+├── 🧪 Dev / Debug Scripts
+│   └── scripts/                  # Contract tests, smoke tests, diagnostics, cleanup
+│
+├── 📖 Protocol Docs
+│   └── docs/
+│       └── awg31.md              # AWG31 protocol documentation
+│
+├── 📥 Import Examples
+│   └── examples/
+│       ├── README.md
+│       ├── wg-easy-backup-example.json
+│       └── 3x-ui-backup-example.json
+│
+├── 🧾 Runtime Directories
+│   ├── backups/                  # Server backups (writable)
+│   ├── logs/                     # Application / bot logs (writable)
+│   └── migration_export/         # DB export helper (untracked)
+│
+└── 🧰 Deployment Tooling (repo root)
+    ├── update.sh                 # In-place auto-updater for deployed panels
+    ├── migrate-to-server.sh      # Migration helper
+    ├── run_migration_053.php     # One-off migration helper (not a general tool)
+    └── check-db.sh               # DB connectivity check
 ```
 
-## File Descriptions
+## Key Facts
 
-### Root Configuration Files
-
-#### `README.md`
-Main project documentation with:
-- Feature overview
-- Quick start guide
-- Installation instructions
-- Usage examples
-- Technology stack
-- Contributing guidelines
-
-#### `CHANGELOG.md`
-Version history following [Keep a Changelog](https://keepachangelog.com/) format:
-- v1.0.0 initial release features
-- Known issues
-- Planned features
-
-#### `LICENSE`
-MIT License - open source, commercial use allowed.
-
-#### `TESTING.md`
-Comprehensive testing guide:
-- Unit tests
-- Integration tests
-- Security tests
-- Browser compatibility
-- Troubleshooting
-
-#### `DEVELOPER.md`
-Developer documentation:
-- Development setup
-- Architecture overview
-- Code style guidelines
-- Security best practices
-- API development
-- Contribution guide
-
-#### `.gitignore`
-Git exclusions:
-- Environment files (.env)
-- Dependencies (vendor/)
-- Database data (db_data/)
-- OS files (.DS_Store)
-- Logs (*.log)
-- IDE configs
-
-#### `.env.example`
-Environment template:
-```env
-MYSQL_ROOT_PASSWORD=root123
-MYSQL_DATABASE=amnezia_panel
-MYSQL_USER=amnezia
-MYSQL_PASSWORD=amnezia123
-```
-
-### Docker Files
-
-#### `docker-compose.yml`
-Two services:
-- **web**: PHP 8.2 Apache container
-  - Mounts project directory
-  - Exposes port 8082
-  - Depends on database
-- **db**: MySQL 8.0 container
-  - Persistent volume (db_data/)
-  - Runs init migrations
-
-#### `Dockerfile`
-PHP 8.2 Apache image with:
-- PHP extensions: pdo_mysql, gd, sodium, curl
-- Composer installed
-- sshpass for SSH deployment
-- Apache mod_rewrite enabled
-
-#### `apache.conf`
-Virtual host configuration:
-- Document root: /var/www/html/public
-- AllowOverride All for .htaccess
-- Directory permissions
-
-### Database
-
-#### `migrations/001_init.sql`
-Initial schema:
-
-**Tables**:
-1. `users` - User accounts (id, name, email, password, role, created_at)
-2. `vpn_servers` - VPN servers (id, user_id, name, host, port, status, keys, AWG params, etc.)
-3. `vpn_clients` - VPN clients (id, server_id, user_id, name, IP, keys, config, QR code, etc.)
-4. `api_tokens` - API authentication (id, user_id, token, expires_at)
-5. `settings` - Application settings (key-value store)
-
-**Indexes**:
-- Email uniqueness
-- Server-client relationships
-- Status filtering
-
-**Default Data**:
-- Admin user: admin@amnez.ia / admin123 (bcrypt hashed)
-
-### Frontend (Public)
-
-#### `public/index.php`
-Main application entry point:
-- Autoloader (Composer)
-- Error handling
-- Route definitions:
-  - `/` - Home (redirect to dashboard)
-  - `/login` - Login page
-  - `/register` - Registration page
-  - `/logout` - Logout action
-  - `/dashboard` - User dashboard
-  - `/servers` - Server list
-  - `/servers/create` - Add server
-  - `/servers/{id}` - Server details
-  - `/servers/{id}/clients/create` - Create client
-  - `/clients/{id}` - Client details
-  - `/clients/{id}/download` - Download config
-  - `/clients/{id}/delete` - Delete client
-  - API routes (future)
-
-#### `public/.htaccess`
-Apache URL rewriting:
-- Route all requests to index.php
-- Preserve query strings
-- Allow static files
-
-### Backend (Core)
-
-#### `inc/Router.php`
-Simple pattern-matching router:
-- `Router::get($path, $handler)` - GET routes
-- `Router::post($path, $handler)` - POST routes
-- Pattern variables: `/path/{id}`
-- 404 handling
-
-#### `inc/DB.php`
-Database singleton:
-- `DB::conn()` - Get PDO connection
-- MySQL configuration
-- UTF8MB4 charset
-- Exception mode
-
-#### `inc/Auth.php`
-Authentication system:
-- `Auth::login($email, $password)` - Authenticate user
-- `Auth::logout()` - Clear session
-- `Auth::user()` - Get current user
-- `Auth::isLoggedIn()` - Check if logged in
-- `Auth::isAdmin()` - Check admin role
-- Bcrypt password hashing
-
-#### `inc/View.php`
-Template rendering:
-- `View::render($template, $data)` - Render Twig template
-- Template caching
-- Auto-escaping enabled
-- Global variables (user, isAdmin)
-
-#### `inc/Config.php`
-Configuration loader:
-- Database settings
-- Application settings
-- Environment-based config
-
-#### `inc/VpnServer.php`
-Server management:
-- `VpnServer::create(...)` - Create server record
-- `$server->deploy()` - Deploy to remote server via SSH:
-  - Install Docker
-  - Create AWG container
-  - Generate server keys
-  - Configure firewall
-  - Start VPN service
-- `$server->getData()` - Get server info
-- `VpnServer::listAll()` - List all servers
-- `VpnServer::listByUser($userId)` - User's servers
-
-**Deployment Steps**:
-1. Connect via SSH (sshpass)
-2. Check/install Docker
-3. Create AWG container from image
-4. Generate WireGuard keys (private, public, preshared)
-5. Generate AWG obfuscation params (Jc, Jmin, Jmax, S1, S2, H1-H4)
-6. Create wg0.conf configuration
-7. Start WireGuard interface
-8. Configure iptables NAT
-9. Enable IP forwarding
-10. Open firewall port
-
-#### `inc/VpnClient.php`
-Client management:
-- `VpnClient::create($serverId, $userId, $name)` - Create client:
-  - Generate client keys
-  - Assign IP from subnet
-  - Build WireGuard config
-  - Add peer to server
-  - Generate QR code
-- `$client->getConfig()` - Get config text
-- `$client->getQRCode()` - Get QR code PNG data URI
-- `VpnClient::listByServer($serverId)` - Server's clients
-- `VpnClient::listByUser($userId)` - User's clients
-
-#### `inc/QrUtil.php`
-**Critical: Amnezia-compatible QR encoding**
-
-From `/Users/oleg/Documents/amnezia/QrUtil.php` (tested, working format):
-
-Methods:
-- `QrUtil::encodeOldPayloadFromConf($config)` - Encode config to Amnezia format:
-  - Parse WireGuard config
-  - Build JSON envelope with AWG params
-  - Compress with gzcompress
-  - Add Qt/QDataStream headers
-  - URL-safe Base64 encode
-- `QrUtil::pngBase64($payload)` - Generate QR code PNG:
-  - Uses Endroid\QrCode library v5.x
-  - Returns data URI: `data:image/png;base64,...`
-  - Fallback to SVG if GD not available
-
-**Format Details**:
-- Header: Version (0x07C00100), compressed length, uncompressed length
-- Payload: gzcompress(JSON, level 9)
-- Encoding: URL-safe Base64 (+ → -, / → _, = trimmed)
-- Structure: Qt QDataStream compatible
-
-### Templates
-
-#### `templates/layout.twig`
-Base layout:
-- HTML5 structure
-- Tailwind CSS CDN
-- Font Awesome icons
-- Navigation menu
-- User info (if logged in)
-- Logout link
-- Content block
-
-#### `templates/login.twig`
-Login form:
-- Email input
-- Password input
-- Error display
-- Link to register
-
-#### `templates/register.twig`
-Registration form:
-- Name input
-- Email input
-- Password input
-- Success/error display
-
-#### `templates/dashboard.twig`
-User dashboard:
-- Servers overview (card grid)
-- Clients overview (table)
-- Quick actions
-- Statistics (future)
-
-#### `templates/servers/index.twig`
-Server list:
-- Table view
-- Status badges
-- Actions (view, edit, delete)
-- Add server button
-
-#### `templates/servers/create.twig`
-Add server form:
-- Server details (name, host, port)
-- SSH credentials (username, password)
-- Validation
-
-#### `templates/servers/deploy.twig`
-Deployment progress:
-- Real-time log updates
-- Progress indicator
-- Success/error status
-- Redirect to server view
-
-#### `templates/servers/view.twig`
-Server details:
-- Server info (status, port, subnet)
-- Create client form
-- Client list table
-- Actions (download config, view QR)
-
-#### `templates/clients/view.twig`
-Client details:
-- Client info (IP, created date)
-- QR code image
-- Download button
-- Delete button
-
-### Testing
-
-#### `test_qr.php`
-QR code generation test:
-- Sample WireGuard config
-- Generate payload
-- Generate QR PNG
-- Save to file
-- Verify output
-
-**Usage**:
-```bash
-docker compose exec web php test_qr.php
-```
-
-**Expected Output**:
-```
-✅ Success! QR code generation working correctly.
-✅ QR code saved to: /var/www/html/test_qr.png
-```
+- **Entry point**: `public/index.php` — a single file holding every route via `Router::get/post/put/delete`.
+- **Classes**: global (no namespaces). New `inc/` classes need an explicit `require_once` in `index.php` / the consuming `bin/` script.
+- **Autoload**: Composer PSR-4 maps `"" => "inc/"`, but it is not relied on for `inc/`; `controllers/` is **not** autoloadable and must be required inside route closures.
+- **Config**: `inc/Config.php` reads `.env` and falls back to `getenv()`. `DB_HOST` is `db` inside Docker and defaults to `127.0.0.1` outside.
+- **Admin**: auto-seeded on first request from `ADMIN_EMAIL` / `ADMIN_PASSWORD`.
+- **Migrations**: applied alphabetically by the MySQL entrypoint on a fresh volume only; run manually for existing installs.
+- **No tests / lint / CI**: the only static check is `php -l`.
+- **No CSRF protection** (documented TODO). Session auth for the admin UI, JWT for `/api/*` (except `/api/protocols`, which uses session admin auth).
 
 ## Data Flow
 
-### Server Deployment Flow
+### Server Deployment
 
 ```
-User submits form
-    ↓
-Router: POST /servers/create
-    ↓
-VpnServer::create() - Insert to DB
-    ↓
-Redirect to /servers/{id}/deploy
-    ↓
-VpnServer->deploy()
-    ↓
-SSH to remote server
-    ↓
-Execute deployment commands:
-  - Install Docker
-  - Pull AWG image
-  - Generate keys
-  - Create config
-  - Start container
-    ↓
-Update DB with server details
-    ↓
-Redirect to /servers/{id}
+POST /servers/create (or /api/servers/create)
+    → VpnServer::create()          # insert DB record
+    → VpnServer::deploy()          # SSH to remote host + docker CLI
+        - install/verify Docker
+        - pull protocol image (AWG/AWG2/XRay/AIVPN/...)
+        - generate keys & config
+        - start container, configure firewall/NAT
+    → update DB with server details
 ```
 
-### Client Creation Flow
+### Client Creation
 
 ```
-User submits client name
-    ↓
-Router: POST /servers/{id}/clients/create
-    ↓
-VpnClient::create($serverId, $userId, $name)
-    ↓
-Steps:
-  1. Get server data
-  2. Generate client keys (SSH exec)
-  3. Get next free IP
-  4. Build config text
-  5. Add peer to server (append wg0.conf, wg syncconf)
-  6. Generate QR code (QrUtil)
-  7. Insert to DB
-    ↓
-Redirect to /clients/{id}
-    ↓
-Display config + QR code
+POST /servers/{id}/clients/create (or /api/clients/create)
+    → VpnClient::create()
+        - get server data
+        - generate keys
+        - assign next free IP
+        - build config text
+        - add peer to server (wg syncconf)
+        - generate QR code (QrUtil)
+        - insert DB record
+    → return config + QR code
 ```
 
-### QR Code Generation Flow
+### Automatic Jobs (cron)
 
-```
-WireGuard config text
-    ↓
-QrUtil::encodeOldPayloadFromConf($config)
-    ↓
-Parse config (regex):
-  - Interface params
-  - Peer params
-  - AWG params (H1-H4, Jc, Jmin, Jmax, S1, S2)
-    ↓
-Build JSON envelope:
-  - containers[]
-    - awg (params)
-    - container: "amnezia-awg"
-  - defaultContainer
-  - description
-  - dns1, dns2
-  - hostName
-    ↓
-JSON encode (pretty print)
-    ↓
-gzcompress(JSON, level 9)
-    ↓
-Add header: pack('N3', version, compLen, uncompLen)
-    ↓
-URL-safe Base64 encode
-    ↓
-QrUtil::pngBase64($payload)
-    ↓
-Generate QR with Endroid\QrCode
-    ↓
-Return data URI: "data:image/png;base64,..."
-```
+| When    | Job                              |
+|---------|----------------------------------|
+| hourly  | disable expired clients          |
+| hourly  | disable over-traffic-limit clients |
+| */30    | sync LDAP users                  |
+| */3     | keep metrics collector alive     |
+| */3     | keep Telegram bot alive          |
 
-## Dependencies
-
-### PHP (Composer)
+## Dependencies (Composer)
 
 ```json
 {
   "require": {
     "php": ">=8.0",
-    "twig/twig": "^3.8",           // Template engine
-    "endroid/qr-code": "^5.0",     // QR code generation
-    "ext-pdo": "*",                // Database
-    "ext-json": "*",               // JSON encoding
-    "ext-curl": "*",               // HTTP requests
-    "ext-gd": "*",                 // Image processing
-    "ext-sodium": "*"              // Crypto (key derivation)
+    "twig/twig": "^3.8",
+    "endroid/qr-code": "^4.8 || ^5.0",
+    "firebase/php-jwt": "^7.0",
+    "ext-pdo": "*",
+    "ext-json": "*",
+    "ext-curl": "*",
+    "ext-gd": "*",
+    "ext-sodium": "*"
   }
 }
 ```
 
-### System (Docker)
-
-- **PHP 8.2**: Modern PHP with types, enums, attributes
-- **Apache 2.4**: Web server with mod_rewrite
-- **MySQL 8.0**: Relational database
-- **sshpass**: Non-interactive SSH password auth
-- **Docker CLI**: Container management (on remote servers)
-
-## Security Considerations
-
-### Implemented
-
-✅ Password hashing (bcrypt)  
-✅ SQL injection prevention (prepared statements)  
-✅ XSS prevention (Twig auto-escape)  
-✅ Session-based authentication  
-✅ Role-based access control  
-
-### TODO
-
-⚠️ CSRF protection (tokens)  
-⚠️ Rate limiting (API)  
-⚠️ JWT authentication (API)  
-⚠️ Input sanitization (comprehensive)  
-⚠️ HTTPS enforcement  
-⚠️ Security headers (CSP, HSTS, etc.)  
-
-## Performance
-
-### Optimizations
-
-- Singleton DB connection
-- Template caching (Twig)
-- Lazy loading (models)
-- Indexed database queries
-
-### Future
-
-- Redis caching
-- Database connection pooling
-- CDN for static assets
-- Minified CSS/JS
-- Gzip compression
-
-## Monitoring
-
-### Logs
-
-- Apache access logs: `/var/log/apache2/access.log`
-- Apache error logs: `/var/log/apache2/error.log`
-- PHP error logs: `error_log()` function
-- MySQL slow query log
-
-### Health Checks
-
-```bash
-# Container status
-docker compose ps
-
-# Application health
-curl http://localhost:8082/
-
-# Database health
-docker compose exec db mysql -u amnezia -p -e "SELECT 1"
-```
-
-## Backup & Recovery
-
-### Database Backup
-
-```bash
-# Backup
-docker compose exec db mysqldump -u amnezia -pamnezia123 amnezia_panel > backup.sql
-
-# Restore
-docker compose exec -T db mysql -u amnezia -pamnezia123 amnezia_panel < backup.sql
-```
-
-### Full Backup
-
-```bash
-# Backup everything
-tar -czf amnezia-backup-$(date +%Y%m%d).tar.gz \
-  --exclude=vendor \
-  --exclude=db_data \
-  amnezia-web-panel/
-
-# Also backup database
-docker compose exec db mysqldump -u amnezia -pamnezia123 amnezia_panel > db-backup-$(date +%Y%m%d).sql
-```
+System (Docker image): `php:8.2-apache`, extensions `pdo_mysql mbstring exif pcntl bcmath gd ldap`, plus `sshpass`, `openssh-client`, `qrencode`, `cron`, `docker.io`.
 
 ---
 
-**Last Updated**: 2024-11-05  
-**Version**: 1.0.0  
 **Maintainer**: Amnezia VPN Community
