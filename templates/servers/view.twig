@@ -825,6 +825,9 @@ async function loadBackups(serverId) {
             <div class="flex gap-2">
               <span class="px-2 py-1 ${statusClass} rounded text-xs">${backup.status}</span>
               ${backup.status === 'completed' ? `
+                <a href="/api/backups/${backup.id}/download" class="text-green-600 hover:text-green-800 px-3 py-1 border rounded text-sm">
+                  <i class="fas fa-download"></i> {{ t('backups.download') }}
+                </a>
                 <button onclick="restoreBackup(${serverId}, ${backup.id})" class="text-blue-600 hover:text-blue-800 px-3 py-1 border rounded text-sm">
                   <i class="fas fa-undo"></i> {{ t('backups.restore') }}
                 </button>

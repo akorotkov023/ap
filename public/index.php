@@ -2281,6 +2281,58 @@ Router::delete('/api/backups/{id}', function ($params) {
     }
 });
 
+// API: Download backup
+Router::get('/api/backups/{id}/download', function ($params) {
+    $user = requireApiAuth();
+    if (!$user)
+        return;
+
+    $backupId = (int) $params['id'];
+
+    try {
+        $backup = VpnServer::getBackup($backupId);
+
+        if (!$backup) {
+            http_response_code(404);
+            echo json_encode(['error' => 'Backup not found']);
+            return;
+        }
+
+        // Get server to check ownership
+        $server = new VpnServer($backup['server_id']);
+        $serverData = $server->getData();
+
+        // Check ownership or admin
+        if ($serverData['user_id'] != $user['id'] && $user['role'] !== 'admin') {
+            http_response_code(403);
+            echo json_encode(['error' => 'Forbidden']);
+            return;
+        }
+
+        if (!file_exists($backup['backup_path'])) {
+            http_response_code(404);
+            echo json_encode(['error' => 'Backup file not found']);
+            return;
+        }
+
+        // Clean any output buffer to prevent header issues
+        while (ob_get_level()) {
+            ob_end_clean();
+        }
+
+        $filename = $backup['backup_name'] ?: ('backup_' . $backupId . '.json');
+
+        header('Content-Type: application/json; charset=utf-8');
+        header('Content-Disposition: attachment; filename="' . $filename . '"');
+        header('Content-Length: ' . filesize($backup['backup_path']));
+        readfile($backup['backup_path']);
+        return;
+    } catch (Exception $e) {
+        http_response_code(500);
+        echo json_encode(['error' => $e->getMessage()]);
+    }
+});
+
 // API: List clients
 Router::get('/api/clients', function () {
     header('Content-Type: application/json');
